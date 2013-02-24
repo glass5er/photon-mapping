@@ -5,8 +5,7 @@ GITSTATUS := $(shell git st 2>&1 | grep "Changes" | head -n 1 | sed -e s/.*Chang
 
 SRC = \
 	main.cpp \
-	vector3.cpp \
-	cObje.cpp \
+	object.cpp \
 
 INCLUDE = \
 	-I./ \
