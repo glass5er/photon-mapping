@@ -15,13 +15,15 @@
 #include <pthread.h>
 
 #include "vector3.h"
-#include "global.h"
 #include "main.h"
 
 using std::vector;
 using std::max;
 using std::min;
 using namespace WebCore;
+
+static const Vector3 gOrigin;
+static Vector3 Light(0.0,1.2,3.75);   //Point Light-Source Position
 
 std::vector<CObj*> objects;
 
@@ -68,31 +70,18 @@ main(int argc, char *argv[]) {
 //  Ray-Geometry Intersections
 //----------------------------
 
-void
-checkDistance(float lDist, CObj *ob)
-{
-  //--  when current distance is valid & lowest : update
-  if (lDist < gDist && lDist > 0.0){
-    gObje      = ob;
-    gDist      = lDist;
-    //--  intersection success
-    gIntersect = true;
-  }
-}
-
-void
+double
 rayObject(CObj *ob, const Vector3 &r, const Vector3 &o){
-  double dist = NOT_INTERSECTED;
 
   int tp = ob->getType();
   //--  switch intersection func with object type
   if      (tp == TYPE_SPHERE) {
-    dist = ob->calcSphereIntersection(r, o);
+    return ob->calcSphereIntersection(r, o);
   } else if (tp == TYPE_PLANE) {
-    dist = ob->calcPlaneIntersection(r, o);
+    return ob->calcPlaneIntersection(r, o);
   }
 
-  checkDistance(dist, ob);
+  return NOT_INTERSECTED;
 }
 
 //----------
@@ -130,17 +119,21 @@ lightObject(CObj *ob, const Vector3 &P, float lightAmbient){
 //  Raytracing
 //------------
 
-void
+SIntersectionStat
 raytrace(const Vector3 &ray, const Vector3 &origin)
 {
   //--  init intersection status
-  gIntersect = false;
-  gDist = NOT_INTERSECTED;
+  SIntersectionStat istat;
 
   //--  check intersection for each object
   for (int i=0; i<nrObjects; i++) {
-    rayObject(objects[i], ray, origin);
+    double dist = rayObject(objects[i], ray, origin);
+    if(dist < istat.dist && dist > 0.0) {
+      istat.dist = dist;
+      istat.obj  = objects[i];
+    }
   }
+  return istat;
 }
 
 Vector3
@@ -156,54 +149,60 @@ calcPixelColor(float x, float y){
     //Focal Length = 1.0
   );
 
-  raytrace(ray, gOrigin);
 
-  if (gIntersect){
-    //--  get point of intersection
-    gPoint = ray * gDist;
+  SIntersectionStat istat = raytrace(ray, gOrigin);
+  if (istat.dist >= NOT_INTERSECTED){ return rgb; }
 
-    int ref = 0;
-    //  Mirror Surface on This Specific Object
-    while (gObje->getOptics() == OPT_REFLECT && ref < reflection_limit){
-      ray = reflect(ray,gOrigin);        //Reflect Ray Off the Surface
-      ref++;
-      raytrace(ray, gPoint);             //Follow the Reflected Ray
-      if (gIntersect){
-        Vector3 tmp = ray * gDist;
-        gPoint = gPoint + tmp;
-      }
-    } //3D Point of Intersection
+  //--  get point of intersection
+  Vector3 pnt = ray * istat.dist;
 
-    if (lightPhotons){
-      //--  Lighting via Photon Mapping
-      rgb = gatherPhotons(gPoint, gObje);
-    } else {
-      //--  Lighting via Standard Illumination Model (Diffuse + Ambient)
-      //--  Remember Intersected Object
-      CObj *tObje = gObje;
+  int ref = 0;
+  //  Mirror Surface on This Specific Object
+  while (istat.obj->getOptics() == OPT_REFLECT && ref < reflection_limit){
+    ray = reflect(istat.obj, pnt, ray, pnt);        //Reflect Ray Off the Surface
+    ref++;
 
-      //--  If in Shadow, Use Ambient Color of Original Object
-      float i = gAmbient;
-
-      //--  Raytrace from Light to Object
-      Vector3 tmp = gPoint - Light;
-      raytrace(tmp, Light);
-
-      if (tObje == gObje) {
-        //--  Ray from Light -> Object Hits Object First? : not in shadow
-        i = lightObject(gObje, gPoint, gAmbient);
-      }
-      Vector3 energy(i, i, i);
-      rgb = mulColor(energy, tObje);
+    istat = raytrace(ray, pnt);             //Follow the Reflected Ray
+    if (istat.dist >= NOT_INTERSECTED){ return rgb; }
+    else {
+      pnt = pnt + ray * istat.dist;
     }
+  } //3D Point of Intersection
+
+  if (lightPhotons){
+    //--  Lighting via Photon Mapping
+    rgb = gatherPhotons(pnt, istat.obj);
+  } else {
+    //--  Lighting via Standard Illumination Model (Diffuse + Ambient)
+    //--  Remember Intersected Object
+    SIntersectionStat org_stat = istat;
+
+    //--  If in Shadow, Use Ambient Color of Original Object
+    static const float ambient = 0.1;
+
+    //--  Raytrace from Light to Object
+    SIntersectionStat lht_stat = raytrace(pnt - Light, Light);
+
+    float intensity = ambient;
+    if (lht_stat.obj == org_stat.obj) {
+      //--  Ray from Light -> Object Hits Object First? : not in shadow
+      intensity = lightObject(lht_stat.obj, pnt, ambient);
+    }
+
+    Vector3 energy(intensity, intensity, intensity);
+    rgb = mulColor(energy, lht_stat.obj);
   }
   return rgb;
 }
 
 Vector3
-reflect(const Vector3 &ray, const Vector3 &fromPoint)
+reflect(
+    CObj *ob,
+    const Vector3 &point,
+    const Vector3 &ray,
+    const Vector3 &from)
 {
-  Vector3 N = surfaceNormal(gObje, gPoint, fromPoint);
+  Vector3 N = surfaceNormal(ob, point, from);
 
   Vector3 ans = ray - N * (2 * dot(ray,N));
   ans.normalize();
@@ -224,24 +223,27 @@ refract(const Vector3 &ray, const Vector3 &fromPoint)
 Vector3
 gatherPhotons(const Vector3 &p, CObj *ob)
 {
+  //--  Photon Integration Area (Squared for Efficiency)
+  static const float sqRadius = 0.7;
+
   Vector3 energy;
   int id = ob->getIndex();
+  //printf("%d\n", id);
   Vector3 N = surfaceNormal(ob, p, gOrigin);
 
   for (int i = 0; i < numPhotons[id]; i++) {
     //--  Photons Which Hit Current Object
-    double cur_sqdist = distance(p, photons[id][i][0]);
+    double cur_dist = distance(p, photons[id][i][0]);
 
     //--  Is Photon Close to Point?
-    if (cur_sqdist < sqRadius) {
-      gSqDist = cur_sqdist;
+    if (cur_dist < sqRadius) {
       float weight = max(0.0, -dot(N, photons[id][i][1]) );
 
       //--  Single Photon Diffuse Lighting
       //--  Weight by Photon-Point Distance
-      weight *= (1.0 - sqrt(gSqDist)) / exposure;
+      weight     *= (1.0 - cur_dist) / exposure;
       Vector3 tmp = photons[id][i][2] * weight;
-      energy = energy + tmp;
+      energy      = energy + tmp;
     }
   }
   return energy;
@@ -268,7 +270,7 @@ void emitPhotons(){
   //--  init photon num
   for (int t = 0; t < nrObjects; t++) { numPhotons[t] = 0; }
 
-  Vector3 rgb, ray, col, prevPoint;
+  Vector3 rgb, ray, col;
   Vector3 white(1.0, 1.0, 1.0);
 
   //--  control photon num with rendering option
@@ -279,45 +281,52 @@ void emitPhotons(){
     //--  initialize photon properties (color, direction, location)
     rgb = white;
     ray = randDir(1.0);
-    prevPoint = Light;
+    Vector3 from = Light;
 
     //--  randomize photon locations
-    while (prevPoint.y() >= Light.y()) {
+    while (from.y() >= Light.y()) {
       //--  +Y dir
-      prevPoint = randDir(1.0) * 0.75 + Light;
+      from = randDir(1.0) * 0.75 + Light;
     }
 
     //--  photons outside of the room : invalid
-    if (fabs(prevPoint[0]) > 1.5 || fabs(prevPoint[1]) > 1.2 ) { bounces = nrBounces + 1; }
+    if (fabs(from.x()) > 1.5 || fabs(from.y()) > 1.2 ) {
+      bounces = nrBounces + 1;
+    }
 
     //--  photons inside any objects : invalid
-    for(int dx=0; dx<nrObjects; dx++) {
+    for(int dx = 0; dx<nrObjects; dx++) {
       CObj *ob = objects[dx];
+
       if(ob->getType() != TYPE_SPHERE) continue;
-      Vector3 center(ob->coords[0], ob->coords[1], ob->coords[2]);
-      if(distance(prevPoint, center) < ob->coords[3]) { bounces = nrBounces+1; }
+
+      Vector3 center(ob->coords);
+      if(distance(from, center) < ob->coords[3]) {
+        bounces = nrBounces+1;
+      }
     }
 
     //--  calc intersection (1st time)
-    raytrace(ray, prevPoint);
+    SIntersectionStat istat = raytrace(ray, from);
 
     //--  calc bounced photon's intercection (2nd, 3rd, ...)
-    while (gIntersect && bounces <= nrBounces){
-      gPoint = ray * gDist + prevPoint;
+    while (istat.dist < NOT_INTERSECTED && bounces <= nrBounces){
+      Vector3 pnt = from + ray * istat.dist;
 
-      col = mulColor(rgb, gObje);
-      rgb = col * (1.0/sqrt((double)bounces));
+      col = mulColor(rgb, istat.obj);
+      rgb = col * (1.0 / sqrt((double)bounces));
 
-      storePhoton(gObje, gPoint, ray, rgb);
+      storePhoton(istat.obj, pnt, ray, rgb);
 
-      drawPhoton(rgb, gPoint);
-      shadowPhoton(ray);
+      drawPhoton(rgb, pnt);
+      shadowPhoton(ray, pnt);
 
-      ray = reflect(ray, prevPoint);
+      ray = reflect(istat.obj, pnt, ray, from);
 
-      raytrace(ray, gPoint);
+      istat = raytrace(ray, pnt);
+      if(istat.dist >= NOT_INTERSECTED){ break; }
 
-      prevPoint = gPoint;
+      from = pnt;
       bounces++;
     }
   }
@@ -336,29 +345,20 @@ storePhoton(CObj *ob, const Vector3 &location, const Vector3 &direction, const V
 }
 
 void
-shadowPhoton(const Vector3 &ray){
+shadowPhoton(const Vector3 &ray, const Vector3 &pnt){
   Vector3 shadow (-0.25,-0.25,-0.25);
 
-  //  save current state
-  Vector3 tPoint = gPoint;
-  CObj *tObje = gObje;
-
-  Vector3 bumpedPoint, shadowPoint;
-
   //Start Just Beyond Last Intersection
-  bumpedPoint = gPoint + ray * 1.0e-5;
+  Vector3 bumpedPoint = pnt + ray * 1.0e-5;
 
   //Trace to Next Intersection (In Shadow)
-  raytrace(ray, bumpedPoint);
+  SIntersectionStat istat = raytrace(ray, bumpedPoint);
+  if(istat.dist >= NOT_INTERSECTED) { return; }
 
   //3D Point
-  shadowPoint = bumpedPoint + ray * gDist;
+  Vector3 shadowPoint = bumpedPoint + ray * istat.dist;
 
-  storePhoton(gObje, shadowPoint, ray, shadow);
-
-  //Restore State
-  gPoint = tPoint;
-  gObje  = tObje;
+  storePhoton(istat.obj, shadowPoint, ray, shadow);
 }
 
 Vector3
@@ -405,6 +405,7 @@ render(){ //Render Several Lines of Pixels at Once Before Drawing
   int x,y,iterations = 0;
   Vector3 rgb;
 
+
   while (iterations < (mouseDragging ? 1024 : max(pMax, 256) )){
 
     //Render Pixels Out of Order With Increasing Resolution: 2x2, 4x4, 16x16... 512x512
@@ -423,8 +424,6 @@ render(){ //Render Several Lines of Pixels at Once Before Drawing
     if (pNeedsDrawing){
       iterations++;
       rgb = calcPixelColor(x,y);
-      //mul3c( tmp, 1.0, rgb);               //All the Magic Happens in Here!
-      //mul3c( tmp, 255.0, rgb);
 
       //ƒsƒNƒZƒ‹‚²‚Æ‚É•`‰æ‚µ‚Ä‚¢‚­
       glColor3d(rgb[0],rgb[1],rgb[2]);
@@ -506,7 +505,7 @@ onClick(int button,int action, int x, int y) {
       Vector3 center(ob->coords[0], ob->coords[1], ob->coords[2]);
       if (distance(mouse2screen, center) < ob->coords[3]) { sphereIndex = i; }
     }
-    printf("sphere %d\n",sphereIndex);
+    //printf("sphere %d\n",sphereIndex);
   }
   //--  when releasing
   else {

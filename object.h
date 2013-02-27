@@ -1,4 +1,5 @@
 //CObj.h
+#include <cstdlib>
 #include "vector3.h"
 
 using WebCore::Vector3;
@@ -41,5 +42,11 @@ class CObj {
     float refractive;
 };
 
-extern CObj *gObj;
-extern float gRefractive;
+typedef struct SIntersectionStat {
+  CObj    *obj;
+  double  dist;
+  SIntersectionStat() {
+    dist = NOT_INTERSECTED;
+    obj = NULL;
+  }
+} SIntersectionStat;
