@@ -335,11 +335,29 @@ void emitPhotons(){
     }
 
     //--  calc intersection (1st time)
+    float refractive = 1.0;
     SIntersectionStat istat = raytrace(ray, from);
 
     //--  calc bounced photon's intercection (2nd, 3rd, ...)
     while (istat.dist < NOT_INTERSECTED && bounces <= nrBounces){
       Vector3 pnt = from + ray * istat.dist;
+
+      //--  reflect or refract
+      int ref = 0;
+      while (istat.obj->getOptics() != OPT_NONE && ref < reflection_limit){
+        if(istat.obj->getOptics() == OPT_REFLECT) { ray = reflect(istat.obj, pnt, ray, from); }
+        else                       /*OPT_REFRACT*/{ ray = refract(istat.obj, pnt, ray, from, refractive); }
+        ref++;
+
+        from = pnt;
+        istat = raytrace(ray, from);             //Follow the Reflected Ray
+        if (istat.dist >= NOT_INTERSECTED){ break; }
+        else {
+          pnt = from + ray * istat.dist;
+        }
+      }
+
+      if(istat.dist >= NOT_INTERSECTED) { continue; }
 
       col = mulColor(rgb, istat.obj);
       rgb = col * (1.0 / sqrt((double)bounces));
@@ -438,24 +456,28 @@ render(){ //Render Several Lines of Pixels at Once Before Drawing
 
     //Render Pixels Out of Order With Increasing Resolution: 2x2, 4x4, 16x16... 512x512
     if (pCol >= pMax) {
-      pRow++; pCol = 0;
+      pRow++;
+      pCol = 0;
+
       if (pRow >= pMax) {
         pIteration++;
         pRow = 0;
         pMax = int(pow(2.0,(double)pIteration));
       }
     }
-    bool pNeedsDrawing = (pIteration == 1 || odd(pRow) || (!odd(pRow) && odd(pCol)));
-    x = pCol * (szImg/pMax); y = pRow * (szImg/pMax);
+    float screen_ratio  = (float)szImg / pMax;
+    bool  pNeedsDrawing = (pIteration == 1 || odd(pRow) || (!odd(pRow) && odd(pCol)));
+    x = pCol * screen_ratio;
+    y = pRow * screen_ratio;
     pCol++;
 
     if (pNeedsDrawing){
       iterations++;
       rgb = calcPixelColor(x,y);
 
-      //ƒsƒNƒZƒ‹‚²‚Æ‚É•`‰æ‚µ‚Ä‚¢‚­
+      //--  render pixel by pixel
       glColor3d(rgb[0],rgb[1],rgb[2]);
-      glPointSize((float)szImg/pMax);
+      glPointSize((float)screen_ratio);
       glBegin(GL_POINTS);
       glVertex2d((double)x,(double)WINH-y);
       glEnd();
@@ -585,9 +607,9 @@ void initObje() {
 
   float v_sphere[][4] = {
     //-- {center(x,y,z), radius}
-    { 1.0,  0.0, 4.0, 0.5},
-    {-0.6, -1.0, 4.5, 0.5},
-    { 0.0,  0.0, 3.0, 0.2},
+    { 1.0,  0.0, 4.0, 0.3},
+    {-0.6,  0.3, 4.5, 0.3},
+    { 0.0, -0.8, 4.0, 0.5},
   };
 
   float v_plane[][2]  = {

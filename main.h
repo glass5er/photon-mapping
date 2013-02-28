@@ -15,11 +15,11 @@ int nrTypes = 2;            //--  object tpye = 0:SPHERE, 1:PLANE
 int nrObjects = 0;          //--  num of object
 
 // ----- Photon Mapping -----
-int nrPhotons = 1000;     //--  Number of Photons Emitted
-int nrBounces = 3;        //--  Number of Times Each Photon Bounces
-bool lightPhotons = true; //--  Enable Photon Lighting?
-float exposure = 50.0;    //--  Number of Photons Integrated at Brightest Pixel
-int   numPhotons[64];     //--  Photon Count for Each Scene Object
+int   nrPhotons = 2000;     //--  Number of Photons Emitted
+int   nrBounces = 3;        //--  Number of Times Each Photon Bounces
+bool  lightPhotons = true;  //--  Enable Photon Lighting?
+float exposure = 100.0;     //--  Number of Photons Integrated at Brightest Pixel
+int   numPhotons[64];       //--  Photon Count for Each Scene Object
 
 //  Allocated Memory for Per-Object Photon Info
 //  0 : location
