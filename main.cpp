@@ -23,7 +23,8 @@ using std::min;
 using namespace WebCore;
 
 static const Vector3 gOrigin;
-static Vector3 Light(0.0,1.2,3.75);   //Point Light-Source Position
+static       Vector3 Light(0.0,1.2,3.75);   //Point Light-Source Position
+static const int     reflection_limit = 4;
 
 std::vector<CObj*> objects;
 
@@ -128,7 +129,7 @@ raytrace(const Vector3 &ray, const Vector3 &origin)
   //--  check intersection for each object
   for (int i=0; i<nrObjects; i++) {
     double dist = rayObject(objects[i], ray, origin);
-    if(dist < istat.dist && dist > 0.0) {
+    if(dist < istat.dist && dist > 1.0e-5) {
       istat.dist = dist;
       istat.obj  = objects[i];
     }
@@ -149,25 +150,29 @@ calcPixelColor(float x, float y){
     //Focal Length = 1.0
   );
 
+  float refractive = 1.0;
+  Vector3 from = gOrigin;
 
-  SIntersectionStat istat = raytrace(ray, gOrigin);
+  SIntersectionStat istat = raytrace(ray, from);
   if (istat.dist >= NOT_INTERSECTED){ return rgb; }
 
   //--  get point of intersection
-  Vector3 pnt = ray * istat.dist;
+  Vector3 pnt = from + ray * istat.dist;
 
   int ref = 0;
   //  Mirror Surface on This Specific Object
-  while (istat.obj->getOptics() == OPT_REFLECT && ref < reflection_limit){
-    ray = reflect(istat.obj, pnt, ray, pnt);        //Reflect Ray Off the Surface
+  while (istat.obj->getOptics() != OPT_NONE && ref < reflection_limit){
+    if(istat.obj->getOptics() == OPT_REFLECT) { ray = reflect(istat.obj, pnt, ray, from); }
+    else                       /*OPT_REFRACT*/{ ray = refract(istat.obj, pnt, ray, from, refractive); }
     ref++;
 
-    istat = raytrace(ray, pnt);             //Follow the Reflected Ray
+    from = pnt;
+    istat = raytrace(ray, from);             //Follow the Reflected Ray
     if (istat.dist >= NOT_INTERSECTED){ return rgb; }
     else {
-      pnt = pnt + ray * istat.dist;
+      pnt = from + ray * istat.dist;
     }
-  } //3D Point of Intersection
+  }
 
   if (lightPhotons){
     //--  Lighting via Photon Mapping
@@ -210,10 +215,33 @@ reflect(
 }
 
 Vector3
-refract(const Vector3 &ray, const Vector3 &fromPoint)
+refract(
+    CObj *ob,
+    const Vector3 &point,
+    const Vector3 &ray,
+    const Vector3 &from,
+    float &ref)
 {
-  //--  @TODO : implement refraction
-  return Vector3();
+  Vector3 N = surfaceNormal(ob, point, from);
+
+  float n1 = ref;
+  float n2 = ob->getRefractive();
+  float s  = dot(ray, N);
+
+  if(ob->getType() == TYPE_SPHERE && s > 0) {
+    //--  from inside to outside : swap n1 and n2
+    float tmp = n1;
+    n1 = n2;
+    n2 = tmp;
+  }
+
+  float n  = n1 / n2;
+
+  Vector3 ans = n * (ray - s * N) - N * sqrt(1 - n * n * (1 - s * s) );
+  ans.normalize();
+
+  ref = n2;
+  return ans;
 }
 
 //----------------
@@ -590,10 +618,12 @@ void initObje() {
   }
 
   //--  set optical properties
-  objects[2]->setOptics(OPT_REFLECT);
+  objects[1]->setOptics(OPT_REFLECT);
+  objects[2]->setOptics(OPT_REFRACT);
+  objects[2]->setRefractive(2.5f);
+
   objects[4]->setColor(green);
   objects[6]->setColor(red);
-
 }
 
 void

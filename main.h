@@ -30,22 +30,18 @@ Vector3 photons[64][5000][3];
 
 /**functions**/
 
-//void    rayObject(CObj *ob, float *r, float *o);
-//void    checkDistance(float lDist, CObj *ob);
-//float   lightDiffuse(float *N, float *P);
-//float   lightObject(CObj *ob, float *P, float lightAmbient);
-//void    raytrace(float *ray, float *origin);
-//
-//Vector3 surfaceNormal(CObj *ob, float *P, float *Inside);
-//Vector3 calcPixelColor(float x, float y);
-//
 Vector3 reflect(
     CObj *ob,
     const Vector3 &point,
     const Vector3 &ray,
     const Vector3 &fromPoint);
-//Vector3 refract(const Vector3 &ray, const Vector3 &fromPoint);
-//
+Vector3 refract(
+    CObj *ob,
+    const Vector3 &point,
+    const Vector3 &ray,
+    const Vector3 &fromPoint,
+    float &ref);
+
 Vector3 gatherPhotons(const Vector3 &p, CObj *ob);
 void    emitPhotons();
 void    storePhoton(CObj *ob,
@@ -80,6 +76,5 @@ bool view3D = false;
 bool mouseDragging = false;
 int  mouseX, mouseY;
 
-const int  reflection_limit = 2;
 //--  rendering pixel info
 int  pRow, pCol, pIteration, pMax;

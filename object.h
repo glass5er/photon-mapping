@@ -18,11 +18,13 @@ class CObj {
   /**ŠÖ”**/
   public :
     CObj(int type, int idx, float *cod);
-    int  getType()   { return type; }
-    int  getOptics() { return optic; }
-    int  getIndex()  { return index; }
-    void setOptics(const int op)   { optic = op; }
-    void setColor(const float *cl) {
+    int    getType()   { return type; }
+    int    getOptics() { return optic; }
+    int    getIndex()  { return index; }
+    float  getRefractive()  { return refractive; }
+    void   setOptics(int op)   { optic = op; }
+    void   setRefractive(float rf)   { this->refractive = rf; }
+    void   setColor(const float *cl) {
       for(int i=0; i<3; i++) color[i] = cl[i];
     }
     float coords[9];
